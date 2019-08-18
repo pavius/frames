@@ -133,7 +133,7 @@ func (ki *Iterator) Next() bool {
 					return false
 				}
 
-				col, err = frames.NewSliceColumn(colName, data)
+				col, err = ki.createColumn(colName, data)
 				if err != nil {
 					ki.err = err
 					return false
@@ -197,7 +197,7 @@ func (ki *Iterator) Next() bool {
 	}
 
 	var err error
-	ki.currFrame, err = frames.NewFrame(columns, indices, nil)
+	ki.currFrame, err = ki.createFrame(columns, indices)
 	if err != nil {
 		ki.err = err
 		return false
@@ -214,6 +214,23 @@ func (ki *Iterator) Err() error {
 // At return the current frames
 func (ki *Iterator) At() frames.Frame {
 	return ki.currFrame
+}
+
+func (ki *Iterator) createColumn(colName string, data interface{}) (frames.Column, error) {
+	if ki.request.Proto.UseArrow {
+		return frames.NewArrowColumn(colName, data)
+	} else {
+		return frames.NewSliceColumn(colName, data)
+	}
+}
+
+func (ki *Iterator) createFrame(columns []frames.Column, indices []frames.Column) (frames.Frame, error) {
+	if ki.request.Proto.UseArrow {
+		columns = append(columns, indices...)
+		return frames.NewArrowFrame(columns, nil)
+	} else {
+		return frames.NewFrame(columns, indices, nil)
+	}
 }
 
 func init() {
