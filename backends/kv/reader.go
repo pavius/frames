@@ -226,8 +226,7 @@ func (ki *Iterator) createColumn(colName string, data interface{}) (frames.Colum
 
 func (ki *Iterator) createFrame(columns []frames.Column, indices []frames.Column) (frames.Frame, error) {
 	if ki.request.Proto.UseArrow {
-		columns = append(columns, indices...)
-		return frames.NewArrowFrame(columns, nil)
+		return frames.NewArrowFrame(columns, indices, nil)
 	} else {
 		return frames.NewFrame(columns, indices, nil)
 	}
