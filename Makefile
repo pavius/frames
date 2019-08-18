@@ -2,6 +2,7 @@ FRAMES_TAG ?= latest
 FRAMES_REPOSITORY ?= iguazio/
 FRAMES_PATH ?= src/github.com/v3io/frames
 FRAMES_BUILD_COMMAND ?= GO111MODULE=on go build -o $(GOPATH)/bin/framesd-$(FRAMES_TAG)-$(GOOS)-$(GOARCH) -ldflags "-X main.Version=$(FRAMES_TAG)" ./cmd/framesd
+FRAMES_ARROW_DOCKER=frames/arrow-dev
 
 .PHONY: build
 build:
@@ -115,6 +116,14 @@ frames:
 frames-arrow:
 	cd arrow && make fresh
 	go build -tags arrow ./cmd/framesd
+
+
+build-arrow-dev-docker:
+	docker build -f Dockerfile.arrow-dev -t $(FRAMES_ARROW_DOCKER)
+
+
+run-arrow-dev-docker:
+	docker run -it --rm -v $(PWD):/frames --shm-size=1000000000 $(FRAMES_ARROW_DOCKER) /bin/bash
 
 clean:
 	cd arrow && make clean
