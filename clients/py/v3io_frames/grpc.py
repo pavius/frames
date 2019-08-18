@@ -188,8 +188,8 @@ class Client(ClientBase):
 
         client.delete([oid])
 
-        if req.index_columns:
-            df = df.set_index(req.index_columns)
+        if resp.index_columns:
+            df = df.set_index(resp.index_columns)
 
         return df
 
