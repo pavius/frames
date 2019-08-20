@@ -96,7 +96,12 @@ func main() {
 		log.Fatalf("error: can't start gRPC server - %s", err)
 	}
 
-	fmt.Printf("server running on http=%s, grpc=%s\n", config.httpAddr, config.grpcAddr)
+	arrow := ""
+	if frames.HasArrow {
+		arrow = " (arrow)"
+	}
+
+	fmt.Printf("server running on http=%s, grpc=%s%s\n", config.httpAddr, config.grpcAddr, arrow)
 	for hsrv.State() == frames.RunningState && gsrv.State() == frames.RunningState {
 		time.Sleep(time.Second)
 	}
