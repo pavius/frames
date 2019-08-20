@@ -32,6 +32,7 @@ import (
 // ColumnBuilder is interface for building columns
 type ColumnBuilder interface {
 	Append(value interface{}) error
+	AppendNil() error
 	At(index int) (interface{}, error)
 	Set(index int, value interface{}) error
 	Delete(index int) error
@@ -72,6 +73,14 @@ func (b *sliceColumBuilder) At(index int) (interface{}, error) {
 func (b *sliceColumBuilder) Append(value interface{}) error {
 	err := b.Set(b.index, value)
 	return err
+}
+
+func (b *sliceColumBuilder) AppendNil() error {
+	nilVal, err := getNilValue(b.msg.Dtype)
+	if err != nil {
+		return err
+	}
+	return b.Append(nilVal)
 }
 
 func (b *sliceColumBuilder) Set(index int, value interface{}) error {
@@ -285,6 +294,14 @@ func (b *labelColumBuilder) Append(value interface{}) error {
 	return b.Set(int(b.msg.Size), value)
 }
 
+func (b *labelColumBuilder) AppendNil() error {
+	nilVal, err := getNilValue(b.msg.Dtype)
+	if err != nil {
+		return err
+	}
+	return b.Append(nilVal)
+}
+
 func (b *labelColumBuilder) Set(index int, value interface{}) error {
 	var err error
 	switch b.msg.Dtype {
@@ -478,4 +495,22 @@ func valueAt(msg *pb.Column, index int) (interface{}, error) {
 	}
 
 	return nil, nil
+}
+
+// AppendNil appends an empty value to data
+func getNilValue(colType pb.DType) (interface{}, error) {
+	switch colType {
+	case pb.DType_INTEGER:
+		return int64(0), nil
+	case pb.DType_FLOAT:
+		return math.NaN(), nil
+	case pb.DType_STRING:
+		return "", nil
+	case pb.DType_TIME:
+		return time.Unix(0, 0), nil
+	case pb.DType_BOOLEAN:
+		return false, nil
+	default:
+		return nil, fmt.Errorf("unknown dtype - %s", colType)
+	}
 }

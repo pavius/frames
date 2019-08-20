@@ -23,6 +23,7 @@ package kv
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/v3io/frames"
 	"github.com/v3io/frames/backends"
@@ -93,8 +94,8 @@ type Iterator struct {
 
 // Next advances the iterator to next frame
 func (ki *Iterator) Next() bool {
-	var columns []frames.Column
-	byName := map[string]frames.Column{}
+	var columns []frames.ColumnBuilder
+	byName := map[string]frames.ColumnBuilder{}
 
 	rowNum := 0
 	numOfSchemaFiles := 0
@@ -133,7 +134,7 @@ func (ki *Iterator) Next() bool {
 					return false
 				}
 
-				col, err = ki.createColumn(colName, data)
+				col, err = ki.createColumnBuilder(colName, data, rowNum-numOfSchemaFiles)
 				if err != nil {
 					ki.err = err
 					return false
@@ -142,7 +143,7 @@ func (ki *Iterator) Next() bool {
 				byName[colName] = col
 			}
 
-			if err := utils.AppendColumn(col, field); err != nil {
+			if err := col.Append(field); err != nil {
 				ki.err = err
 				return false
 			}
@@ -158,7 +159,7 @@ func (ki *Iterator) Next() bool {
 			}
 
 			var err error
-			err = utils.AppendNil(col)
+			err = col.AppendNil()
 			if err != nil {
 				ki.err = err
 				return false
@@ -175,14 +176,23 @@ func (ki *Iterator) Next() bool {
 		return false
 	}
 
+	finalColumns := make([]frames.Column, len(columns))
+	finalColumnsByName := make(map[string]frames.Column, len(columns))
+	for i, col := range columns {
+		finalColumn := col.Finish()
+		finalColumns[i] = finalColumn
+		finalColumnsByName[finalColumn.Name()] = finalColumn
+	}
+
 	var indices []frames.Column
 
 	// If the only column that was requested is the key-column don't set it as an index.
 	// Otherwise, set the key column (if requested) to be the index or not depending on the `ResetIndex` value.
-	if !ki.request.Proto.ResetIndex && (len(columns) > 1 || columns[0].Name() != ki.schema.Key) {
-		indexCol, ok := byName[ki.schema.Key]
+	if !ki.request.Proto.ResetIndex && (len(finalColumns) > 1 || finalColumns[0].Name() != ki.schema.Key) {
+		indexCol, ok := finalColumnsByName[ki.schema.Key]
 		if ok {
 			delete(byName, ki.schema.Key)
+			delete(finalColumnsByName, ki.schema.Key)
 
 			// If a user requested specific columns containing the index, duplicate the index column
 			// to be an index and a column
@@ -191,13 +201,13 @@ func (ki *Iterator) Next() bool {
 				indices = []frames.Column{dupIndex}
 			} else {
 				indices = []frames.Column{indexCol}
-				columns = utils.RemoveColumn(ki.schema.Key, columns)
+				finalColumns = utils.RemoveColumn(ki.schema.Key, finalColumns)
 			}
 		}
 	}
 
 	var err error
-	ki.currFrame, err = ki.createFrame(columns, indices)
+	ki.currFrame, err = ki.createFrame(finalColumns, indices)
 	if err != nil {
 		ki.err = err
 		return false
@@ -216,11 +226,29 @@ func (ki *Iterator) At() frames.Frame {
 	return ki.currFrame
 }
 
-func (ki *Iterator) createColumn(colName string, data interface{}) (frames.Column, error) {
+func (ki *Iterator) createColumnBuilder(colName string, data interface{}, size int) (frames.ColumnBuilder, error) {
+	var dtype frames.DType
+	switch data.(type) {
+	case []bool:
+		dtype = frames.BoolType
+	case []float64:
+		dtype = frames.FloatType
+	case []int:
+		dtype = frames.IntType
+	case []int64:
+		dtype = frames.IntType
+	case []string:
+		dtype = frames.StringType
+	case []time.Time:
+		dtype = frames.TimeType
+	default:
+		return nil, fmt.Errorf("unknown data type %T", data)
+	}
+
 	if ki.request.Proto.UseArrow {
-		return frames.NewArrowColumn(colName, data)
+		return frames.NewArrowColumnBuilder(colName, dtype, size)
 	} else {
-		return frames.NewSliceColumn(colName, data)
+		return frames.NewSliceColumnBuilder(colName, dtype, size), nil
 	}
 }
 

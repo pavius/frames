@@ -13,13 +13,11 @@
 # limitations under the License.
 
 import json
+import pandas as pd
 from datetime import datetime
 from functools import wraps
 
-import pandas as pd
-
 import grpc
-
 from . import frames_pb2 as fpb
 from . import frames_pb2_grpc as fgrpc
 from .client import ClientBase
@@ -36,7 +34,6 @@ try:
     has_arrow = True
 except ImportError:
     has_arrow = False
-
 
 IGNORE, FAIL = fpb.IGNORE, fpb.FAIL
 _scheme_prefix = 'grpc://'
@@ -188,8 +185,10 @@ class Client(ClientBase):
 
         client.delete([oid])
 
-        if req.index_columns:
-            df = df.set_index(req.index_columns)
+        columns = resp.index_columns[:]
+
+        if columns:
+            df = df.set_index(columns)
 
         return df
 

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/pkg/errors"
@@ -218,7 +219,7 @@ func (b *ArrowColumnBuilder) Append(value interface{}) error {
 		if !ok {
 			return typeError(value, "bool")
 		}
-		b.boolBuilder.Append(bval)
+		return b.boolBuilder.Append(bval)
 	case arrow.Float64Type:
 		fval, err := asFloat64(value)
 		if err != nil {
@@ -245,6 +246,14 @@ func (b *ArrowColumnBuilder) Append(value interface{}) error {
 		return b.tsBuilder.Append(tval)
 	}
 	return fmt.Errorf("unsupported dtype - %s", b.field.DType())
+}
+
+func (b *ArrowColumnBuilder) AppendNil() error {
+	nilVal, err := getArrowNilValue(b.field.DType())
+	if err != nil {
+		return err
+	}
+	return b.Append(nilVal)
 }
 
 // At return value at
@@ -624,4 +633,21 @@ func NewArrowFrame(columns []Column, indices []Column, labels map[string]interfa
 	}
 
 	return &ArrowFrame{tbl, indexNames}, nil
+}
+
+func getArrowNilValue(colType arrow.DType) (interface{}, error) {
+	switch colType {
+	case arrow.Integer64Type:
+		return int64(0), nil
+	case arrow.Float64Type:
+		return math.NaN(), nil
+	case arrow.StringType:
+		return "", nil
+	case arrow.TimestampType:
+		return time.Unix(0, 0), nil
+	case arrow.BoolType:
+		return false, nil
+	default:
+		return nil, fmt.Errorf("unknown dtype - %s", colType)
+	}
 }
