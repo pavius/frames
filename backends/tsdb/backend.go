@@ -147,7 +147,7 @@ func (b *Backend) GetAdapter(session *frames.Session, password string, token str
 		if !found {
 			var err error
 
-			adapter, err = b.GetAdapter(session, password, token, path)
+			adapter, err = b.newAdapter(session, password, token, path)
 			if err != nil {
 				return nil, err
 			}
