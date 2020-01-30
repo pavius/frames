@@ -46,6 +46,8 @@ import (
 
 // Backend is a tsdb backend
 type Backend struct {
+	adapters          *lru.Cache
+	adaptersLock      sync.Mutex
 	queriers          *lru.Cache
 	queriersLock      sync.Mutex
 	backendConfig     *frames.BackendConfig
@@ -57,13 +59,9 @@ type Backend struct {
 
 // NewBackend return a new tsdb backend
 func NewBackend(logger logger.Logger, v3ioContext v3io.Context, cfg *frames.BackendConfig, framesConfig *frames.Config) (frames.DataBackend, error) {
-	querierCacheSize := framesConfig.QuerierCacheSize
-	if querierCacheSize == 0 {
-		querierCacheSize = 64
-	}
-
 	newBackend := Backend{
-		queriers:          lru.New(querierCacheSize),
+		queriers:          lru.New(framesConfig.QuerierCacheSize),
+		adapters:          lru.New(framesConfig.AdapterCacheSize),
 		logger:            logger.GetChild("tsdb"),
 		backendConfig:     cfg,
 		framesConfig:      framesConfig,
@@ -75,7 +73,6 @@ func NewBackend(logger logger.Logger, v3ioContext v3io.Context, cfg *frames.Back
 }
 
 func (b *Backend) newConfig(session *frames.Session) *config.V3ioConfig {
-
 	cfg := &config.V3ioConfig{
 		WebApiEndpoint:               session.Url,
 		Container:                    session.Container,
@@ -90,7 +87,6 @@ func (b *Backend) newConfig(session *frames.Session) *config.V3ioConfig {
 }
 
 func (b *Backend) newAdapter(session *frames.Session, password string, token string, path string) (*tsdb.V3ioAdapter, error) {
-
 	session = frames.InitSessionDefaults(session, b.framesConfig)
 	containerName, newPath, err := v3ioutils.ProcessPaths(session, path, false)
 	if err != nil {
@@ -133,16 +129,6 @@ func getBytes(str string) []byte {
 
 // GetAdapter returns an adapter
 func (b *Backend) GetAdapter(session *frames.Session, password string, token string, path string) (*tsdb.V3ioAdapter, error) {
-	adapter, err := b.newAdapter(session, password, token, path)
-	if err != nil {
-		return nil, err
-	}
-	return adapter, nil
-}
-
-// GetQuerier returns a querier
-func (b *Backend) GetQuerier(session *frames.Session, password string, token string, path string) (*pquerier.V3ioQuerier, error) {
-
 	h := fnv.New64()
 	_, _ = h.Write(getBytes(session.Url))
 	_, _ = h.Write(getBytes(session.Container))
@@ -152,26 +138,60 @@ func (b *Backend) GetQuerier(session *frames.Session, password string, token str
 	_, _ = h.Write(getBytes(token))
 	key := h.Sum64()
 
-	qry, found := b.queriers.Get(key)
+	adapter, found := b.adapters.Get(key)
 	if !found {
-		b.queriersLock.Lock()
-		defer b.queriersLock.Unlock()
-		qry, found = b.queriers.Get(key) // Double-checked locking
+		b.adaptersLock.Lock()
+		defer b.adaptersLock.Unlock()
+
+		adapter, found = b.adapters.Get(key) // Double-checked locking
 		if !found {
 			var err error
-			adapter, err := b.newAdapter(session, password, token, path)
+
+			adapter, err = b.GetAdapter(session, password, token, path)
 			if err != nil {
 				return nil, err
 			}
-			qry, err = adapter.QuerierV2()
-			if err != nil {
-				return nil, errors.Wrap(err, "Failed to initialize Querier")
-			}
-			b.queriers.Add(key, qry)
+
+			b.adapters.Add(key, adapter)
 		}
 	}
 
-	return qry.(*pquerier.V3ioQuerier), nil
+	return adapter.(*tsdb.V3ioAdapter), nil
+}
+
+// GetQuerier returns a querier
+func (b *Backend) GetQuerier(session *frames.Session, password string, token string, path string) (*pquerier.V3ioQuerier, error) {
+	h := fnv.New64()
+	_, _ = h.Write(getBytes(session.Url))
+	_, _ = h.Write(getBytes(session.Container))
+	_, _ = h.Write(getBytes(path))
+	_, _ = h.Write(getBytes(session.User))
+	_, _ = h.Write(getBytes(password))
+	_, _ = h.Write(getBytes(token))
+	key := h.Sum64()
+
+	querier, found := b.queriers.Get(key)
+	if !found {
+		b.queriersLock.Lock()
+		defer b.queriersLock.Unlock()
+
+		querier, found = b.queriers.Get(key) // Double-checked locking
+		if !found {
+			adapter, err := b.GetAdapter(session, password, token, path)
+			if err != nil {
+				return nil, err
+			}
+
+			querier, err = adapter.QuerierV2()
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to initialize Querier")
+			}
+
+			b.queriers.Add(key, querier)
+		}
+	}
+
+	return querier.(*pquerier.V3ioQuerier), nil
 }
 
 // Create creates a table

@@ -48,6 +48,7 @@ type Config struct {
 	Workers int `json:"workers"`
 
 	QuerierCacheSize                 int  `json:"querierCacheSize"`
+	AdapterCacheSize                 int  `json:"adapterCacheSize"`
 	TsdbLoadPartitionsFromSchemaAttr bool `json:"tsdbLoadPartitionsFromSchemaAttr"`
 
 	Backends []*BackendConfig `json:"backends,omitempty"`
@@ -57,6 +58,14 @@ type Config struct {
 func (c *Config) InitDefaults() error {
 	if c.DefaultTimeout == 0 {
 		c.DefaultTimeout = 30
+	}
+
+	if c.QuerierCacheSize == 0 {
+		c.QuerierCacheSize = 64
+	}
+
+	if c.AdapterCacheSize == 0 {
+		c.AdapterCacheSize = 64
 	}
 
 	for _, backendConfig := range c.Backends {
