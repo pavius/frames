@@ -274,7 +274,9 @@ func (api *API) createBackends(config *frames.Config) error {
 			"backend", backendConfig.Name,
 			"workers", backendConfig.V3ioGoWorkers,
 			"requestChanLength", backendConfig.V3ioGoRequestChanLength,
-			"maxConnsPerHost", backendConfig.MaxConnections)
+			"maxConnsPerHost", backendConfig.MaxConnections,
+			"querierCacheSize", config.QuerierCacheSize,
+			"adapterCacheSize", config.AdapterCacheSize)
 
 		// create a context for the backend
 		v3ioContext, err := v3iohttp.NewContext(api.logger, httpClient, &v3io.NewContextInput{

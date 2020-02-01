@@ -69,6 +69,10 @@ func NewBackend(logger logger.Logger, v3ioContext v3io.Context, cfg *frames.Back
 		inactivityTimeout: 0,
 	}
 
+	newBackend.adapters.OnEvicted = func(key lru.Key, value interface{}) {
+		logger.WarnWith("Evicted adapter from cache - check cache size")
+	}
+
 	return &newBackend, nil
 }
 
