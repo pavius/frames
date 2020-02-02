@@ -22,6 +22,7 @@ package http
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -90,6 +91,8 @@ func NewClient(url string, session *frames.Session, logger logger.Logger) (*Clie
 		session: session,
 		logger:  logger,
 	}
+
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	return client, nil
 }
