@@ -2,17 +2,19 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"github.com/v3io/frames"
 	"os"
 	"time"
+
+	"github.com/v3io/frames"
+	"github.com/v3io/frames/http"
+	"github.com/v3io/frames/pb"
+	"github.com/v3io/frames/repeatingtask"
 
 	"github.com/nuclio/errors"
 	"github.com/nuclio/logger"
 	nucliozap "github.com/nuclio/zap"
-	"github.com/v3io/frames/http"
-	"github.com/v3io/frames/pb"
-	"github.com/v3io/frames/repeatingtask"
 )
 
 type framulate struct {
@@ -29,12 +31,8 @@ func newFramulate(ctx context.Context,
 	containerName string,
 	userName string,
 	accessKey string,
-	maxInflightRequests int,
-	timeout time.Duration) (*framulate, error) {
+	maxInflightRequests int) (*framulate, error) {
 	var err error
-
-	ctx, cancelContext := context.WithDeadline(ctx, time.Now().Add(timeout))
-	defer cancelContext()
 
 	newFramulate := framulate{
 		framesURL: framesURL,
@@ -95,7 +93,7 @@ func (f *framulate) createTSDBTables(numTables int) error {
 		NumReptitions: numTables,
 		MaxParallel:   256,
 		Handler: func(cookie interface{}, repetitionIndex int) error {
-			tableName := f.getTableName(repetitionIndex	)
+			tableName := f.getTableName(repetitionIndex)
 
 			f.logger.DebugWith("Creating table", "tableName", tableName)
 
@@ -139,20 +137,33 @@ func (f *framulate) createTSDBSeries(numTables int, numSeriesPerTable int) error
 					"seriesName", seriesName)
 
 				framesAppender, err := f.framesClient.Write(&frames.WriteRequest{
-					Backend:       "tsdb",
-					Table:         tableName,
+					Backend: "tsdb",
+					Table:   tableName,
 				})
 
 				if err != nil {
 					return errors.Wrap(err, "Failed to create err")
 				}
 
-				frames.NewFrameFromMap()
+				columns := map[string]interface{}{
+					seriesName: []int{1},
+				}
+
+				indices := map[string]interface{}{
+					"timestamp": []time.Time{time.Now()},
+				}
+
+				frame, err := frames.NewFrameFromMap(columns, indices)
+				if err != nil {
+					return errors.Wrap(err, "Failed to create frame")
+				}
 
 				// create a frame
-				framesAppender.Add()
+				if err := framesAppender.Add(frame); err != nil {
+					return errors.Wrap(err, "Failed to add frame")
+				}
 
-				return nil
+				return framesAppender.WaitForComplete(10 * time.Second)
 			},
 		}
 
@@ -174,18 +185,34 @@ func (f *framulate) getTableName(index int) string {
 }
 
 func main() {
+	framesURL := ""
+	containerName := ""
+	userName := ""
+	accessKey := ""
+	maxInflightRequests := 0
+	numTables := 0
+	numSeriesPerTable := 0
+
+	flag.StringVar(&framesURL, "url", "", "")
+	flag.StringVar(&containerName, "container-name", "", "")
+	flag.StringVar(&userName, "username", "", "")
+	flag.StringVar(&accessKey, "access-key", "", "")
+	flag.IntVar(&maxInflightRequests, "max-inflight-requests", 256, "")
+	flag.IntVar(&numTables, "num-tables", 16, "")
+	flag.IntVar(&numSeriesPerTable, "num-series-per-table", 512, "")
+	flag.Parse()
+
 	framulateInstance, err := newFramulate(context.TODO(),
-		"https://framesd.default-tenant.app.xgyoqnkxttjn.iguazio-cd2.com",
-		"test2",
-		"admin",
-		"621d11f2-f408-4481-b027-cf47c1373c45",
-		256,
-		10*time.Minute)
+		framesURL,
+		containerName,
+		userName,
+		accessKey,
+		256)
 	if err != nil {
 		os.Exit(1)
 	}
 
-	if err := framulateInstance.start(4, 8); err != nil {
+	if err := framulateInstance.start(numTables, numSeriesPerTable); err != nil {
 		panic(errors.GetErrorStackString(err, 10))
 	}
 }
