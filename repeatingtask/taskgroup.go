@@ -1,6 +1,9 @@
 package repeatingtask
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/nuclio/errors"
+)
 
 type TaskGroupErrors struct {
 	taskErrors []TaskErrors
@@ -19,18 +22,18 @@ func (tge *TaskGroupErrors) Errors() []error {
 }
 
 func (tge *TaskGroupErrors) Error() error {
-	errors := tge.Errors()
+	taskGroupErrors := tge.Errors()
 
-	if len(errors) == 0 {
+	if len(taskGroupErrors) == 0 {
 		return nil
 	}
 
 	errorString := ""
-	for _, err := range errors {
+	for _, err := range taskGroupErrors {
 		errorString += fmt.Sprintf("%s\n", err.Error())
 	}
 
-	return nil
+	return errors.New(errorString)
 }
 
 type TaskGroup struct {
@@ -50,7 +53,7 @@ func (t *TaskGroup) Wait() TaskGroupErrors {
 	for _, task := range t.tasks {
 
 		// wait for task and add task errors
-		taskGroupErrors.taskErrors = append(taskGroupErrors.taskErrors, task.wait())
+		taskGroupErrors.taskErrors = append(taskGroupErrors.taskErrors, task.Wait())
 	}
 
 	return taskGroupErrors

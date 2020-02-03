@@ -55,22 +55,23 @@ type Task struct {
 	OnCompleteChan chan struct{}
 	Timeout        time.Duration
 	ErrorsChan     chan *TaskError
-	MaxNumFailures int
+	MaxNumErrors   int
 	Cookie         interface{}
 
-	repititionIndex uint64
-	lock            *sync.RWMutex
+	repititionIndex        uint64
+	numInstancesInTaskChan uint64
+	lock                   sync.Locker
 }
 
 func (t *Task) initialize() error {
-	t.lock = &sync.RWMutex{}
+	t.lock = &sync.Mutex{}
 	t.OnCompleteChan = make(chan struct{}, 1)
 	t.ErrorsChan = make(chan *TaskError, t.NumReptitions)
 
 	return nil
 }
 
-func (t *Task) wait() TaskErrors {
+func (t *Task) Wait() TaskErrors {
 	<-t.OnCompleteChan
 
 	// read errors

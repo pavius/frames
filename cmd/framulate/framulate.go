@@ -18,12 +18,14 @@ import (
 )
 
 type framulate struct {
-	ctx          context.Context
-	logger       logger.Logger
-	taskPool     *repeatingtask.Pool
-	framesURL    string
-	accessKey    string
-	framesClient frames.Client
+	ctx                     context.Context
+	logger                  logger.Logger
+	taskPool                *repeatingtask.Pool
+	framesURL               string
+	accessKey               string
+	framesClient            frames.Client
+	maxParallelTablesCreate int
+	maxParallelSeriesCreate int
 }
 
 func newFramulate(ctx context.Context,
@@ -31,15 +33,19 @@ func newFramulate(ctx context.Context,
 	containerName string,
 	userName string,
 	accessKey string,
-	maxInflightRequests int) (*framulate, error) {
+	maxInflightRequests int,
+	maxParallelTablesCreate int,
+	maxParallelSeriesCreate int) (*framulate, error) {
 	var err error
 
 	newFramulate := framulate{
-		framesURL: framesURL,
+		framesURL:               framesURL,
+		maxParallelTablesCreate: maxParallelTablesCreate,
+		maxParallelSeriesCreate: maxParallelSeriesCreate,
 	}
 
 	newFramulate.taskPool, err = repeatingtask.NewPool(ctx,
-		128,
+		1024*1024,
 		maxInflightRequests)
 
 	if err != nil {
@@ -70,13 +76,22 @@ func newFramulate(ctx context.Context,
 }
 
 func (f *framulate) start(numTables int, numSeriesPerTable int) error {
+	f.logger.DebugWith("Starting",
+		"numTables", numTables,
+		"numSeriesPerTable", numSeriesPerTable)
+
 	if err := f.createTSDBTables(numTables); err != nil {
 		return errors.Wrap(err, "Failed to create TSDB tables")
 	}
 
+	f.logger.DebugWith("Waiting to create series")
+	time.Sleep(5 * time.Second)
+
 	if err := f.createTSDBSeries(numTables, numSeriesPerTable); err != nil {
 		return errors.Wrap(err, "Failed to create TSDB series")
 	}
+
+	f.logger.DebugWith("Done")
 
 	return nil
 }
@@ -87,21 +102,23 @@ func (f *framulate) createTSDBTables(numTables int) error {
 	rateValue := pb.Value{}
 	rateValue.SetValue("1/s")
 
-	f.logger.DebugWith("Creating tables", "numTables", numTables)
+	f.logger.DebugWith("Preparing tables", "numTables", numTables)
 
 	tableCreationTask := repeatingtask.Task{
 		NumReptitions: numTables,
-		MaxParallel:   256,
+		MaxParallel:   f.maxParallelTablesCreate,
 		Handler: func(cookie interface{}, repetitionIndex int) error {
 			tableName := f.getTableName(repetitionIndex)
 
-			f.logger.DebugWith("Creating table", "tableName", tableName)
+			f.logger.DebugWith("Deleting table", "tableName", tableName)
 
 			// try to delete first and ignore error
 			f.framesClient.Delete(&pb.DeleteRequest{
 				Backend: "tsdb",
 				Table:   tableName,
 			})
+
+			f.logger.DebugWith("Creating table", "tableName", tableName)
 
 			return f.framesClient.Create(&pb.CreateRequest{
 				Backend: "tsdb",
@@ -118,7 +135,7 @@ func (f *framulate) createTSDBTables(numTables int) error {
 }
 
 func (f *framulate) createTSDBSeries(numTables int, numSeriesPerTable int) error {
-	seriesCreationTaskGroup := repeatingtask.TaskGroup{}
+	// seriesCreationTaskGroup := repeatingtask.TaskGroup{}
 
 	// create a task per table and wait on these
 	for tableIdx := 0; tableIdx < numTables; tableIdx++ {
@@ -126,7 +143,7 @@ func (f *framulate) createTSDBSeries(numTables int, numSeriesPerTable int) error
 		// create a series creation task
 		seriesCreationTask := repeatingtask.Task{
 			NumReptitions: numSeriesPerTable,
-			MaxParallel:   1024,
+			MaxParallel:   f.maxParallelSeriesCreate,
 			Cookie:        f.getTableName(tableIdx),
 			Handler: func(cookie interface{}, repetitionIndex int) error {
 				tableName := cookie.(string)
@@ -163,21 +180,33 @@ func (f *framulate) createTSDBSeries(numTables int, numSeriesPerTable int) error
 					return errors.Wrap(err, "Failed to add frame")
 				}
 
-				return framesAppender.WaitForComplete(10 * time.Second)
+				err = framesAppender.WaitForComplete(60 * time.Second)
+				if err != nil {
+					f.logger.WarnWith("Failed writing to series", "err", err.Error())
+				}
+
+				return err
 			},
 		}
 
-		// submit the task
-		f.taskPool.SubmitTask(&seriesCreationTask)
+		// parallel table writes
+		//// submit the task
+		//f.taskPool.SubmitTask(&seriesCreationTask)
+		//
+		//// add the task
+		//seriesCreationTaskGroup.AddTask(&seriesCreationTask)
 
-		// add the task
-		seriesCreationTaskGroup.AddTask(&seriesCreationTask)
+		if taskErrors := f.taskPool.SubmitTaskAndWait(&seriesCreationTask); taskErrors.Error() != nil {
+			return taskErrors.Error()
+		}
 	}
 
 	// wait for series
-	taskGroupErrors := seriesCreationTaskGroup.Wait()
+	// taskGroupErrors := seriesCreationTaskGroup.Wait()
 
-	return taskGroupErrors.Error()
+	// return taskGroupErrors.Error()
+
+	return nil
 }
 
 func (f *framulate) getTableName(index int) string {
@@ -192,6 +221,8 @@ func main() {
 	maxInflightRequests := 0
 	numTables := 0
 	numSeriesPerTable := 0
+	maxParallelSeriesCreate := 0
+	maxParallelTablesCreate := 0
 
 	flag.StringVar(&framesURL, "url", "", "")
 	flag.StringVar(&containerName, "container-name", "", "")
@@ -200,6 +231,8 @@ func main() {
 	flag.IntVar(&maxInflightRequests, "max-inflight-requests", 256, "")
 	flag.IntVar(&numTables, "num-tables", 16, "")
 	flag.IntVar(&numSeriesPerTable, "num-series-per-table", 512, "")
+	flag.IntVar(&maxParallelTablesCreate, "max-parallel-tables-create", 8, "")
+	flag.IntVar(&maxParallelSeriesCreate, "max-parallel-series-create", 512, "")
 	flag.Parse()
 
 	framulateInstance, err := newFramulate(context.TODO(),
@@ -207,7 +240,9 @@ func main() {
 		containerName,
 		userName,
 		accessKey,
-		256)
+		maxInflightRequests,
+		maxParallelTablesCreate,
+		maxParallelSeriesCreate)
 	if err != nil {
 		os.Exit(1)
 	}

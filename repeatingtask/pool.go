@@ -37,7 +37,7 @@ func (p *Pool) SubmitTaskAndWait(task *Task) TaskErrors {
 		}
 	}
 
-	return task.wait()
+	return task.Wait()
 }
 
 func (p *Pool) SubmitTask(task *Task) error {
@@ -46,7 +46,14 @@ func (p *Pool) SubmitTask(task *Task) error {
 		return errors.Wrap(err, "Failed to initialize channel")
 	}
 
-	p.taskChan <- task
+	for parallelIdx := 0; parallelIdx < task.MaxParallel; parallelIdx++ {
+		select {
+		case p.taskChan <- task:
+		default:
+			return errors.New("Failed to submit task - enlarge the pool max # of tasks")
+		}
+
+	}
 
 	return nil
 }

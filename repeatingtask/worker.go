@@ -36,7 +36,7 @@ func (w *worker) handleTask(task *Task) error {
 
 	// check if task errored out. if so, just return since we assume that the worker
 	// that injected the last error will mark it as complete
-	if len(task.ErrorsChan) > task.MaxNumFailures {
+	if len(task.ErrorsChan) > task.MaxNumErrors {
 		return nil
 	}
 
@@ -44,11 +44,6 @@ func (w *worker) handleTask(task *Task) error {
 	repetitionIndex := atomic.AddUint64(&task.repititionIndex, 1)
 	if int(repetitionIndex) > task.NumReptitions {
 		return nil
-	}
-
-	// if can paralleliez, shove back to task channel so another worker can pick it up
-	if task.MaxParallel != 1 {
-		w.pool.taskChan <- task
 	}
 
 	// the index the user wants to see is 0 based
@@ -67,14 +62,12 @@ func (w *worker) handleTask(task *Task) error {
 
 	// signal that we're done if there were more failures than allowed or that w're simply done
 	if int(task.repititionIndex) >= task.NumReptitions ||
-		len(task.ErrorsChan) > task.MaxNumFailures {
+		len(task.ErrorsChan) > task.MaxNumErrors {
 		w.signalTaskComplete(task)
 	}
 
-	// if we can't parallelize the task, return it to the channel now that we're done with it
-	if task.MaxParallel == 1 {
-		w.pool.taskChan <- task
-	}
+	// return our instance of the task into the pool so that another worker can handle it
+	w.pool.taskChan <- task
 
 	return nil
 }
